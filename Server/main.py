@@ -21,6 +21,11 @@ def get_valid_move():
     data = convert_data.prepare_data_list_valid_moves(valid_moves)
     return jsonify(data)
 
+@app.route('/api/v1/join-game')
+def join_game():
+    data = {"color": "white" if white_turn else 'black'}
+    swap_turn()
+    return jsonify(data)
 
 @app.route('/api/v1/make-move', methods=['POST'])
 def make_move():

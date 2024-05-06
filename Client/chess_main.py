@@ -1,15 +1,12 @@
 # Dùng pygame để tạo giao diện đồ họa
-import json
 import pickle
 import threading
 
 import pygame as p
 import requests
-import websocket as websocket
 
 import chess_engine, socket
 import sys
-from multiprocessing import Process, Queue
 
 import convert_data
 
@@ -23,6 +20,7 @@ IMAGES = {}
 chess_api = 'http://127.0.0.1:5000/api/v1/'
 game_state = chess_engine.GameState()
 
+
 def loadImages():
     pieces = ['wp', 'wR', 'wN', 'wB', 'wK', 'wQ', 'bp', 'bR', 'bN', 'bB', 'bK', 'bQ']
     for piece in pieces:
@@ -31,21 +29,28 @@ def loadImages():
 
 def socket_thread():
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect(("127.0.0.1", 8888))
+    client_socket.connect(("127.0.0.1", 5555))
     while True:
         print('Đang chờ dữ liệu mới')
         data_recv = client_socket.recv(4096)
         data = pickle.loads(data_recv)
         print('Dữ liệu nhận được:', data)
 
+
 def get_valid_move_from_server():
     response = requests.get(chess_api + 'valid-move')
     valid_move_data = response.json()
     return convert_data.convert_valid_moves_data(valid_move_data, game_state.board)
 
-def main():
 
-    my_turn = True
+def join_game():
+    response = requests.get(chess_api + 'join-game')
+    color = response.json()['color']
+    return True if color == 'white' else False
+
+
+def main():
+    my_turn = join_game()
     valid_moves = get_valid_move_from_server()
     p.init()  # Khởi tạo pygame
     screen = p.display.set_mode((BOARD_WIDTH + MOVE_LOG_PANEL_WIDTH, BOARD_HEIGHT))
@@ -59,8 +64,6 @@ def main():
     player_clicks = []
     game_over = False
     move_log_font = p.font.SysFont("Arial", 14, False, False)
-    # player_one = True
-    # player_two = True
 
     # Khởi động luồng WebSocket
     # websocket_thread = threading.Thread(target=socket_thread)
@@ -92,12 +95,16 @@ def main():
                             'data': data_click
                         }
                         response = requests.post(url=chess_api + '/make-move', json=data)
-                        result = response.json()['result']
-                        if result == 'valid':
+                        data_recv = response.json()
+                        if data_recv['result'] == 'valid':
                             move_made = True
                             animate = True
                             move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
                             game_state.makeMove(move)
+                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
+                                                                                game_state.board)
+                            if len(valid_moves) == 0:
+                                print('game over')
                         if not move_made:
                             player_clicks = [square_selected]
                         else:
@@ -107,8 +114,6 @@ def main():
         if move_made:
             if animate:
                 animateMove(game_state.move_log[-1], screen, game_state.board, clock)
-            # server
-            valid_moves = get_valid_move_from_server()
             move_made = False
             animate = False
         drawGameState(screen, game_state, valid_moves, square_selected)
