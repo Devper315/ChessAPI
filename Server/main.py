@@ -37,7 +37,10 @@ def make_move():
         if move == valid_moves[i]:
             game_state.makeMove(valid_moves[i])
             valid_moves = game_state.getValidMoves()
-            result['result'] = 'valid'
+            result.update({
+                'result': 'valid',
+                'valid_moves': convert_data.prepare_data_list_valid_moves(valid_moves)
+            })
 
     return jsonify(result)
 

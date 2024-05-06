@@ -101,8 +101,7 @@ def main():
                             animate = True
                             move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
                             game_state.makeMove(move)
-                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
-                                                                                game_state.board)
+                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'], game_state.board)
                             if len(valid_moves) == 0:
                                 print('game over')
                         if not move_made:
