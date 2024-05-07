@@ -1,14 +1,11 @@
-# Dùng pygame để tạo giao diện đồ họa
-import pickle
 import threading
-
 import pygame as p
 import requests
-
-import chess_engine, socket
+import chess_engine
 import sys
-
 import convert_data
+import web_socket
+import socketio
 
 BOARD_WIDTH = BOARD_HEIGHT = 512
 MOVE_LOG_PANEL_WIDTH = 250  # độ dài của bảng ghi chép nước đi
@@ -19,6 +16,9 @@ MAX_FPS = 15
 IMAGES = {}
 chess_api = 'http://127.0.0.1:5000/api/v1/'
 game_state = chess_engine.GameState()
+sio = socketio.Client()
+screen = p.display.set_mode((BOARD_WIDTH + MOVE_LOG_PANEL_WIDTH, BOARD_HEIGHT))
+clock = p.time.Clock()
 
 
 def loadImages():
@@ -27,14 +27,18 @@ def loadImages():
         IMAGES[piece] = p.transform.scale(p.image.load("images/" + piece + ".png"), (SQUARE_SIZE, SQUARE_SIZE))
 
 
-def socket_thread():
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect(("127.0.0.1", 5555))
-    while True:
-        print('Đang chờ dữ liệu mới')
-        data_recv = client_socket.recv(4096)
-        data = pickle.loads(data_recv)
-        print('Dữ liệu nhận được:', data)
+@sio.event
+def connect():
+    print('Connected to server')
+
+
+# Hàm được gọi khi nhận được tin nhắn từ máy chủ
+@sio.event
+def message(data):
+    print('Received message from server:', data)
+    move = chess_engine.Move([6, 0], [4, 0], game_state.board)
+    game_state.makeMove(move)
+    animateMove(game_state.move_log[-1], screen, game_state.board, clock)
 
 
 def get_valid_move_from_server():
@@ -49,12 +53,17 @@ def join_game():
     return True if color == 'white' else False
 
 
+def web_socket_start():
+    sio.connect('http://localhost:5000')
+    sio.emit('message', 'Hello from client')
+    sio.wait()
+
+
 def main():
     my_turn = join_game()
     valid_moves = get_valid_move_from_server()
     p.init()  # Khởi tạo pygame
-    screen = p.display.set_mode((BOARD_WIDTH + MOVE_LOG_PANEL_WIDTH, BOARD_HEIGHT))
-    clock = p.time.Clock()
+
     screen.fill(p.Color("white"))
     move_made = False
     animate = False
@@ -66,9 +75,9 @@ def main():
     move_log_font = p.font.SysFont("Arial", 14, False, False)
 
     # Khởi động luồng WebSocket
-    # websocket_thread = threading.Thread(target=socket_thread)
-    # websocket_thread.daemon = True
-    # websocket_thread.start()
+    websocket_thread = threading.Thread(target=web_socket_start)
+    websocket_thread.daemon = True
+    websocket_thread.start()
 
     while running:
         for e in p.event.get():
@@ -101,7 +110,8 @@ def main():
                             animate = True
                             move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
                             game_state.makeMove(move)
-                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'], game_state.board)
+                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
+                                                                                game_state.board)
                             if len(valid_moves) == 0:
                                 print('game over')
                         if not move_made:
