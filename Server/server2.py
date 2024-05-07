@@ -1,7 +1,7 @@
 import json
 
 from flask import Flask, request, jsonify
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, join_room
 
 app = Flask(__name__)
 socketio = SocketIO(app)
@@ -9,9 +9,7 @@ socketio = SocketIO(app)
 
 @socketio.on('connect')
 def handle_connect():
-    # Lấy id của client kết nối
     client_id = request.sid
-    # Thêm client vào phòng (room) có tên là client_id
     join_room(client_id)
     print(f'Client {client_id} connected')
     send_data_to_client(client_id, client_id)
@@ -19,7 +17,7 @@ def handle_connect():
 
 @app.route('/api/v1/test-socket')
 def test_socket():
-    socket_client_id = request.headers.get('socket_id')
+    socket_client_id = request.headers.get('client_id')
     return jsonify(socket_client_id)
 
 
@@ -27,7 +25,6 @@ def send_data_to_client(client_id, data):
     info = {"Client ID": data}
     json_data = json.dumps(info)
     socketio.emit('message', json_data, room=client_id)
-
 
 
 if __name__ == '__main__':

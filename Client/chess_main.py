@@ -1,10 +1,10 @@
+import json
 import threading
 import pygame as p
 import requests
 import chess_engine
 import sys
 import convert_data
-import web_socket
 import socketio
 
 BOARD_WIDTH = BOARD_HEIGHT = 512
@@ -12,13 +12,16 @@ MOVE_LOG_PANEL_WIDTH = 250  # độ dài của bảng ghi chép nước đi
 MOVE_LOG_PANEL_HEIGHT = BOARD_HEIGHT
 DIMENSION = 8  # số hàng,cột trên bàn cờ
 SQUARE_SIZE = BOARD_HEIGHT // DIMENSION
-MAX_FPS = 15
+MAX_FPS = 60
 IMAGES = {}
 chess_api = 'http://127.0.0.1:5000/api/v1/'
 game_state = chess_engine.GameState()
 sio = socketio.Client()
 screen = p.display.set_mode((BOARD_WIDTH + MOVE_LOG_PANEL_WIDTH, BOARD_HEIGHT))
 clock = p.time.Clock()
+my_turn = True
+valid_moves = []
+api_headers = {}
 
 
 def loadImages():
@@ -27,22 +30,8 @@ def loadImages():
         IMAGES[piece] = p.transform.scale(p.image.load("images/" + piece + ".png"), (SQUARE_SIZE, SQUARE_SIZE))
 
 
-@sio.event
-def connect():
-    print('Connected to server')
-
-
-# Hàm được gọi khi nhận được tin nhắn từ máy chủ
-@sio.event
-def message(data):
-    print('Received message from server:', data)
-    move = chess_engine.Move([6, 0], [4, 0], game_state.board)
-    game_state.makeMove(move)
-    animateMove(game_state.move_log[-1], screen, game_state.board, clock)
-
-
 def get_valid_move_from_server():
-    response = requests.get(chess_api + 'valid-move')
+    response = requests.get(chess_api + 'valid-move', headers=api_headers)
     valid_move_data = response.json()
     return convert_data.convert_valid_moves_data(valid_move_data, game_state.board)
 
@@ -53,6 +42,31 @@ def join_game():
     return True if color == 'white' else False
 
 
+@sio.event
+def get_client_id(data):
+    print(data)
+    data_dict = json.loads(data)
+    api_headers['client_id'] = data_dict['client_id']
+
+
+@sio.event
+def get_enemy_move(data_recv):
+    global valid_moves, my_turn
+    data = json.loads(data_recv)
+    data_click = data['enemy_click']
+    move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
+    game_state.makeMove(move)
+    animateMove(move, screen, game_state.board, clock)
+    valid_moves = convert_data.convert_valid_moves_data(data['valid_moves'], game_state.board)
+    print('enemy running')
+    my_turn = True
+
+
+@sio.event
+def notificarion(data):
+    print('Thông báo server:', data)
+
+
 def web_socket_start():
     sio.connect('http://localhost:5000')
     sio.emit('message', 'Hello from client')
@@ -60,10 +74,14 @@ def web_socket_start():
 
 
 def main():
+    global my_turn, valid_moves
+    websocket_thread = threading.Thread(target=web_socket_start)
+    websocket_thread.daemon = True
+    websocket_thread.start()
     my_turn = join_game()
     valid_moves = get_valid_move_from_server()
-    p.init()  # Khởi tạo pygame
-
+    p.init()
+    p.display.set_caption("Player " + "white" if my_turn else "Player black")
     screen.fill(p.Color("white"))
     move_made = False
     animate = False
@@ -74,18 +92,11 @@ def main():
     game_over = False
     move_log_font = p.font.SysFont("Arial", 14, False, False)
 
-    # Khởi động luồng WebSocket
-    websocket_thread = threading.Thread(target=web_socket_start)
-    websocket_thread.daemon = True
-    websocket_thread.start()
-
     while running:
         for e in p.event.get():
             if e.type == p.QUIT:
                 p.quit()
                 sys.exit()
-            # mouse handler
-
             elif e.type == p.MOUSEBUTTONDOWN:
                 if not game_over:
                     location = p.mouse.get_pos()
@@ -103,17 +114,19 @@ def main():
                         data = {
                             'data': data_click
                         }
-                        response = requests.post(url=chess_api + '/make-move', json=data)
+                        response = requests.post(url=chess_api + '/make-move', json=data, headers=api_headers)
                         data_recv = response.json()
                         if data_recv['result'] == 'valid':
                             move_made = True
                             animate = True
                             move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
                             game_state.makeMove(move)
-                            valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
-                                                                                game_state.board)
+                            # valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
+                            #                                                     game_state.board)
                             if len(valid_moves) == 0:
                                 print('game over')
+                            valid_moves = []
+                            my_turn = False
                         if not move_made:
                             player_clicks = [square_selected]
                         else:
@@ -137,7 +150,6 @@ def main():
         elif game_state.stalemate:
             game_over = True
             drawEndGameText(screen, "Stalemate")
-
         clock.tick(MAX_FPS)
         p.display.flip()
 
@@ -165,6 +177,7 @@ def highlightSquares(screen, game_state, valid_moves, square_selected):
     """
     Highlight square selected and moves for piece selected.
     """
+    global my_turn
     if (len(game_state.move_log)) > 0:
         last_move = game_state.move_log[-1]
         s = p.Surface((SQUARE_SIZE, SQUARE_SIZE))
@@ -173,8 +186,8 @@ def highlightSquares(screen, game_state, valid_moves, square_selected):
         screen.blit(s, (last_move.end_col * SQUARE_SIZE, last_move.end_row * SQUARE_SIZE))
     if square_selected != ():
         row, col = square_selected
-        if game_state.board[row][col][0] == (
-                'w' if game_state.white_to_move else 'b'):
+        # if game_state.board[row][col][0] == ('w' if my_turn else 'b'):
+        if my_turn:
             s = p.Surface((SQUARE_SIZE, SQUARE_SIZE))
             s.set_alpha(100)
             s.fill(p.Color('blue'))
@@ -223,7 +236,6 @@ def drawMoveLog(screen, game_state, font):
 
         text_object = font.render(text, True, p.Color('white'))
         text_location = move_log_rect.move(padding, text_y)
-        # screen.blit(text_object, text_location)
         text_y += text_object.get_height() + line_spacing
 
 
