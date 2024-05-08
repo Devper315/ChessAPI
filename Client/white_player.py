@@ -30,23 +30,28 @@ def loadImages():
         IMAGES[piece] = p.transform.scale(p.image.load("images/" + piece + ".png"), (SQUARE_SIZE, SQUARE_SIZE))
 
 
-def get_valid_move_from_server():
-    response = requests.get(chess_api + 'valid-move', headers=api_headers)
+def start_game():
+    response = requests.get(chess_api + 'start-game', headers=api_headers)
     valid_move_data = response.json()
     return convert_data.convert_valid_moves_data(valid_move_data, game_state.board)
 
 
-def join_game():
-    response = requests.get(chess_api + 'join-game')
-    color = response.json()['color']
-    return True if color == 'white' else False
+def accept_challenge():
+    global my_turn
+    data = {'challenger_id': ''}
+    response = requests.get(chess_api + 'accept-challenge', json=data)
+    my_turn = False
+    valid_move_data = response.json()
+    return convert_data.convert_valid_moves_data(valid_move_data, game_state.board)
 
 
 @sio.event
 def get_client_id(data):
+    global valid_moves
     print(data)
     data_dict = json.loads(data)
     api_headers['client_id'] = data_dict['client_id']
+    valid_moves = start_game()
 
 
 @sio.event
@@ -78,8 +83,8 @@ def main():
     websocket_thread = threading.Thread(target=web_socket_start)
     websocket_thread.daemon = True
     websocket_thread.start()
-    my_turn = join_game()
-    valid_moves = get_valid_move_from_server()
+
+    # valid_moves = accept_challenge()
     p.init()
     p.display.set_caption("Player " + "white" if my_turn else "Player black")
     screen.fill(p.Color("white"))
@@ -121,8 +126,6 @@ def main():
                             animate = True
                             move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
                             game_state.makeMove(move)
-                            # valid_moves = convert_data.convert_valid_moves_data(data_recv['valid_moves'],
-                            #                                                     game_state.board)
                             if len(valid_moves) == 0:
                                 print('game over')
                             valid_moves = []

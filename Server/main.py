@@ -2,23 +2,10 @@ import json
 
 from flask import Flask, jsonify, request
 from flask_socketio import SocketIO, join_room
-
-import chess_engine
-import convert_data
-
+from room import Room
 app = Flask(__name__)
 socketio = SocketIO(app)
-game_state = chess_engine.GameState()
-valid_moves = game_state.getValidMoves()
-white_turn = True
-black_turn = False
-players = {}
-
-
-def swap_turn():
-    global white_turn, black_turn
-    white_turn = not white_turn
-    black_turn = not black_turn
+room_list = []
 
 
 def send_data_to_client(client_id, data):
@@ -32,15 +19,23 @@ def send_move_to_enemy(client_id, data):
     socketio.emit('get_enemy_move', json_data, room=client_id)
 
 
-@app.route('/api/v1/valid-move')
-def get_valid_move():
-    data = convert_data.prepare_data_list_valid_moves(valid_moves)
+@app.route('/api/v1/start-game')
+def start_game():
+    white_client_id = request.headers.get("client_id")
+    new_room = Room(white_client_id)
+    room_list.append(new_room)
+    data = new_room.prepare_data_list_valid_moves()
     return jsonify(data)
 
 
-@app.route('/api/v1/join-game')
-def join_game():
-    data = {"color": "white" if white_turn else 'black'}
+@app.route('/api/v1/accept-challenge')
+def accept_challenge():
+    client_id = request.headers.get('client_id')
+    challenger_id = request.json['challenger_id']
+    room = find_room_by_player_id(challenger_id)
+    room.black_id = client_id
+    room.waiting_id = client_id
+    data = room.prepare_data_list_valid_moves()
     return jsonify(data)
 
 
@@ -48,45 +43,34 @@ def join_game():
 def client_connect_to_server():
     client_id = request.sid
     join_room(client_id)
-    if white_turn:
-        players['white'] = request.sid
-    else:
-        players['black'] = request.sid
-    swap_turn()
-    print(players)
-    print(f'Client {client_id} connected')
+    print('Client %s connected' % client_id)
     send_data_to_client(client_id, client_id)
+
+
+def find_room_by_player_id(player_id):
+    for room in room_list:
+        if room.white_id == player_id or room.black_id == player_id:
+            return room
 
 
 @app.route('/api/v1/make-move', methods=['POST'])
 def make_move():
-    global valid_moves
-    result = {'result': 'invalid'}
-    data_click = request.json['data']
-    move = chess_engine.Move(data_click[0], data_click[1], game_state.board)
-    for i in range(len(valid_moves)):
-        if move == valid_moves[i]:
-            current_client_id = request.headers.get("client_id")
-            game_state.makeMove(valid_moves[i])
-            valid_moves = game_state.getValidMoves()
-            data_for_enemy = {
-                'enemy_click': data_click,
-                'valid_moves': convert_data.prepare_data_list_valid_moves(valid_moves)
-            }
-            for key in players:
-                if players[key] != current_client_id:
-                    print('enemy:', players[key])
-                    send_move_to_enemy(players[key], data_for_enemy)
-            if len(valid_moves) == 0:
-                print('game_over')
-                socketio.emit("notificarion", 'Game over')
-            result.update({
-                'result': 'valid',
-                # 'valid_moves': convert_data.prepare_data_list_valid_moves(valid_moves)
-            })
-            break
+    player_click = request.json['data']
+    client_id = request.headers.get("client_id")
+    room = find_room_by_player_id(client_id)
+    result = room.handle_player_click(player_click)
+    if result == 'valid':
+        data_for_enemy = {
+            'enemy_click': player_click,
+            'valid_moves': room.prepare_data_list_valid_moves()
+        }
+        send_move_to_enemy(room.waiting_id, data_for_enemy)
+        room.swap_player()
+    if len(room.valid_moves) == 0:
+        print('game_over')
+        socketio.emit("notificarion", 'Game over')
 
-    return jsonify(result)
+    return jsonify({'result': result})
 
 
 if __name__ == '__main__':
